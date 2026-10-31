@@ -1,0 +1,29 @@
+# Python / uv
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Local secrets
+.env
+.env.*
+!.env.example
+
+# Frontend
+node_modules/
+
+# Runtime knowledge data (separate persistence and Git history)
+knowledge/raw/
+knowledge/wiki/
+knowledge/staging/
+knowledge/releases/
+knowledge/history/
+
+# OS
+.DS_Store
