@@ -4,7 +4,7 @@
 
 采用 **Python + LLM Wiki + TypeScript** 架构：保留原始资料，由 LLM 持续整理和更新相互关联的 Wiki 页面，用户通过网页阅读知识、搜索资料并获得带来源引用的回答。
 
-> 当前仓库处于设计阶段，本文描述目标架构与实施计划。目录、接口和启动配置尚未实现。
+> 当前仓库处于设计阶段，已配置基于 uv 的 Python 开发环境与依赖锁定。本文描述目标架构与实施计划，业务目录、接口和服务启动配置尚未实现。
 
 ## 设计方向
 
@@ -193,4 +193,30 @@ compose.yaml
 
 ## 启动说明
 
-目前尚无可运行服务。实现阶段将补充环境变量模板、依赖锁定、数据库迁移、模型配置和 Docker Compose 启动步骤；需要持久化备份 PostgreSQL 与完整知识目录。
+### Python 开发环境（已配置）
+
+使用 uv 管理 Python 3.12、项目虚拟环境及依赖。先安装 [uv](https://docs.astral.sh/uv/getting-started/installation/)，在仓库根目录执行：
+
+```sh
+uv sync --locked
+```
+
+uv 会按 `.python-version` 选择 Python 3.12，缺少时自动下载，并在 `.venv/` 中安装 `uv.lock` 锁定的运行依赖和开发工具。无需手动激活环境，后续命令使用 `uv run` 执行。`pyproject.toml` 管理直接依赖，`uv.lock` 应提交到版本控制；`.venv/` 不提交。
+
+当前运行依赖包括 FastAPI、Uvicorn、Pydantic、Pydantic Settings、SQLAlchemy、Alembic、PostgreSQL 驱动 Psycopg、HTTPX 和 Markdown frontmatter 解析器；开发依赖为 Ruff。数据库服务需另行配置。
+
+```sh
+# 添加运行依赖或开发工具，并同步更新锁文件
+uv add <package>
+uv add --dev <package>
+
+# 后续新增 Python 代码时，仅对本次修改的文件执行
+uv run ruff format path/to/file.py
+uv run ruff check path/to/file.py
+```
+
+当前没有业务代码和测试，不预设测试覆盖率范围。后续仅为核心架构逻辑配置测试与覆盖率统计，测试由用户手动执行，Agent 不运行测试。
+
+### 服务启动（待实现）
+
+目前尚无可运行服务。实现阶段将补充前端环境、环境变量模板、数据库迁移、模型配置和 Docker Compose 启动步骤；需要持久化备份 PostgreSQL 与完整知识目录。
