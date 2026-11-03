@@ -1,3 +1,5 @@
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
@@ -5,9 +7,17 @@ from sqlalchemy import select
 from backend.app.db.models import Job, Snapshot, Source, now
 from backend.app.db.session import Session
 from backend.app.ingestion.policy import next_month
+from backend.app.ingestion.sources import sync_sources
 from backend.app.worker.main import enqueue
 
-app = FastAPI(title="Minne-Minne ingestion")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    sync_sources()
+    yield
+
+
+app = FastAPI(title="Minne-Minne ingestion", lifespan=lifespan)
 
 
 class SourcePatch(BaseModel):

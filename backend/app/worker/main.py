@@ -8,6 +8,7 @@ from backend.app.config import settings
 from backend.app.db.models import Job, Source, now
 from backend.app.db.session import Session, engine
 from backend.app.ingestion.policy import next_month
+from backend.app.ingestion.sources import sync_sources
 from backend.app.worker.crawl import crawl
 
 logger = logging.getLogger(__name__)
@@ -78,6 +79,7 @@ def main():
         if not lock.scalar(text("SELECT pg_try_advisory_lock(67432109)")):
             raise RuntimeError("Another ingestion worker is already running")
         lock.commit()
+        sync_sources()
         with Session.begin() as session:
             for job in session.scalars(select(Job).where(Job.status == "running")):
                 job.error = "Worker interrupted"

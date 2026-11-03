@@ -37,9 +37,13 @@ class Fetcher:
                 content.extend(chunk)
                 if len(content) > MAX_BYTES:
                     raise ValueError("Response exceeds 10 MiB")
+            # iter_bytes() already decoded content and transfer encodings.
+            headers = response.headers.copy()
+            for name in ("content-encoding", "content-length", "transfer-encoding"):
+                headers.pop(name, None)
             return httpx.Response(
                 response.status_code,
-                headers=response.headers,
+                headers=headers,
                 content=bytes(content),
                 request=response.request,
             )
@@ -59,6 +63,8 @@ class Fetcher:
         self.delay = max(self.delay, parser.crawl_delay(self.agent) or 0)
 
     def fetch(self, url: str):
+        if not normalize(url, url):
+            raise ValueError("URL is outside configured wiki scope")
         for _ in range(6):
             if not self.robots or not self.robots.can_fetch(self.agent, url):
                 raise ValueError("URL disallowed by robots.txt")

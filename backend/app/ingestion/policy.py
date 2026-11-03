@@ -3,16 +3,21 @@ from datetime import datetime
 from html.parser import HTMLParser
 from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 
-ROOTS = {
-    "wikiwiki.jp": "/kancolle/",
-    "zh.kcwiki.cn": "/wiki/",
-}
+from backend.app.config import CRAWL_SOURCES
 
 
 def normalize(url: str, base: str) -> str | None:
     parts = urlsplit(urljoin(base, url))
-    root = ROOTS.get(parts.hostname or "")
     path = unquote(parts.path)
+    root = next(
+        (
+            source.root_path
+            for source in CRAWL_SOURCES
+            if parts.hostname == urlsplit(source.url).hostname
+            and path.startswith(source.root_path)
+        ),
+        None,
+    )
     if (
         parts.scheme != "https"
         or parts.netloc != urlsplit(base).netloc

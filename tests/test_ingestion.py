@@ -9,6 +9,7 @@ import httpx
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import sessionmaker
 
+from backend.app.config import SourceConfig
 from backend.app.db.models import Base, Job, Page, Snapshot, Source
 from backend.app.ingestion.http import Fetcher
 from backend.app.ingestion.policy import Links, next_month, normalize
@@ -39,6 +40,49 @@ class PolicyTests(unittest.TestCase):
         ]:
             with self.subTest(url=url):
                 self.assertIsNone(normalize(url, SEED))
+
+    def test_scope_uses_configured_site_and_root(self):
+        seed = "https://archive.example/knowledge/"
+        sources = (
+            SourceConfig(
+                id="archive",
+                name="Archive",
+                url=seed,
+                root_path="/knowledge/",
+            ),
+        )
+        with patch("backend.app.ingestion.policy.CRAWL_SOURCES", sources):
+            self.assertEqual(normalize("赤城#data", seed), seed + "%E8%B5%A4%E5%9F%8E")
+            for url in [
+                "/knowledge-other/page",
+                "/outside/page",
+                "../page",
+                "https://other.example/knowledge/page",
+                SEED,
+            ]:
+                with self.subTest(url=url):
+                    self.assertIsNone(normalize(url, seed))
+
+    def test_scope_keeps_multiple_roots_on_same_host(self):
+        seed = "https://archive.example/ships/"
+        sources = (
+            SourceConfig("ships", "Ships", seed, "/ships/"),
+            SourceConfig(
+                "mechanics",
+                "Mechanics",
+                "https://archive.example/mechanics/",
+                "/mechanics/",
+            ),
+            SourceConfig("other", "Other", "https://other.example/wiki/", "/wiki/"),
+        )
+        with patch("backend.app.ingestion.policy.CRAWL_SOURCES", sources):
+            for path in ["/ships/Akagi", "/mechanics/Air_power"]:
+                with self.subTest(path=path):
+                    self.assertEqual(
+                        normalize(path, seed), "https://archive.example" + path
+                    )
+            self.assertIsNone(normalize("/wiki/Akagi", seed))
+            self.assertIsNone(normalize("https://other.example/wiki/Akagi", seed))
 
     def test_link_deduplication(self):
         links = Links(SEED)
@@ -101,6 +145,25 @@ class FetchTests(unittest.TestCase):
             with patch.object(self.fetcher, "request", return_value=response):
                 with self.assertRaises(ValueError):
                     self.fetcher.fetch(SEED)
+
+    def test_initial_url_must_be_inside_configured_scope(self):
+        with patch.object(self.fetcher, "request") as request:
+            for url in ["https://example.com/", "https://wikiwiki.jp/other/"]:
+                with self.subTest(url=url):
+                    with self.assertRaisesRegex(
+                        ValueError, "outside configured wiki scope"
+                    ):
+                        self.fetcher.fetch(url)
+            request.assert_not_called()
+
+    def test_removed_source_cannot_be_fetched(self):
+        with (
+            patch("backend.app.ingestion.policy.CRAWL_SOURCES", ()),
+            patch.object(self.fetcher, "request") as request,
+        ):
+            with self.assertRaisesRegex(ValueError, "outside configured wiki scope"):
+                self.fetcher.fetch(SEED)
+            request.assert_not_called()
 
     def test_stream_limit(self):
         transport = httpx.MockTransport(lambda request: self.response(body=b"12345"))
