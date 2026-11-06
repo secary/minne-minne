@@ -4,7 +4,7 @@
 
 采用 **Python + LLM Wiki + TypeScript** 架构：保留原始资料，由 LLM 持续整理和更新相互关联的 Wiki 页面，用户通过网页阅读知识、搜索资料并获得带来源引用的回答。
 
-> 已实现首批知识数据源定期抓取后端：PostgreSQL 元数据、原始 HTML 快照、月度调度、由外部定时启动的单轮 `source-crawler` 容器与管理 API。LLM 编译、检索问答和前端仍处于设计阶段。本文其余架构内容为目标设计。
+> 已实现首批知识数据源定期抓取后端：PostgreSQL 元数据、原始 HTML 快照、月度调度、由外部定时启动的单轮 `source-crawler` 容器与管理 API；以及 LLM Wiki Schema v1 的页面契约、七类模板、Markdown 读写与结构校验命令。正文解析、LLM 编译、版本发布、检索问答和前端仍待实现。本文其余架构内容为目标设计。
 
 ## 设计方向
 
@@ -140,7 +140,7 @@ frontend/                    # React + TypeScript
 backend/
   app/
     api/                     # 阅读、搜索、问答、资料与任务接口
-    domain/                  # 领域模型与页面规则
+    domain/                  # 已实现 Schema v1、Markdown 读写与结构校验
     ingestion/               # 采集、解析、来源管理
     compiler/                # 分析、页面变更与校验
     retrieval/               # 别名、全文检索与链接扩展
@@ -151,7 +151,7 @@ backend/
     worker/                  # 任务领取与执行
   migrations/                # Alembic
 knowledge/
-  schema/                    # purpose、模板、引用和更新规则
+  schema/                    # 已实现知识范围、七类模板、引用和更新规则
   raw/                       # 原始资料快照与解析产物
   wiki/                      # 已发布知识的 Markdown 内容
     ships/
@@ -173,7 +173,7 @@ compose.yaml
 .env.example
 ```
 
-`knowledge/` 为运行时持久化目录；知识历史与应用代码版本独立管理。以上为规划目录，具体布局随实现调整。
+`knowledge/schema/` 随应用代码提交；其余 `knowledge/` 子目录为运行时持久化数据，不提交到应用仓库。知识历史与应用代码版本独立管理。以上其余未实现部分为规划目录，具体布局随实现调整。
 
 ## 第一版范围
 
@@ -206,7 +206,7 @@ uv sync --locked
 
 uv 会按 `.python-version` 选择 Python 3.12，缺少时自动下载，并在 `.venv/` 中安装 `uv.lock` 锁定的运行依赖和开发工具。无需手动激活环境，后续命令使用 `uv run` 执行。`pyproject.toml` 管理直接依赖，`uv.lock` 应提交到版本控制；`.venv/` 不提交。
 
-当前运行依赖包括 FastAPI、Uvicorn、Pydantic、Pydantic Settings、SQLAlchemy、Alembic、PostgreSQL 驱动 Psycopg、HTTPX 和 Markdown frontmatter 解析器；开发依赖为 Ruff、pytest、pytest-cov 和 coverage。数据库服务可使用下述 Compose 配置。
+当前运行依赖包括 FastAPI、Uvicorn、Pydantic、Pydantic Settings、SQLAlchemy、Alembic、PostgreSQL 驱动 Psycopg、HTTPX、Markdown frontmatter 解析器和 PyYAML；开发依赖为 Ruff、pytest、pytest-cov 和 coverage。数据库服务可使用下述 Compose 配置。
 
 HTTPX 已启用 SOCKS 支持（`httpx[socks]`），可使用运行环境中的 HTTP / HTTPS / SOCKS5 代理。更新后执行 `uv sync --locked`，避免因缺少 `socksio` 导致客户端初始化失败。单元测试使用隔离的 HTTP 客户端或采集器替身，不读取本机代理设置。
 
@@ -219,6 +219,26 @@ uv add --dev <package>
 uv run ruff format path/to/file.py
 uv run ruff check path/to/file.py
 ```
+
+### LLM Wiki Schema（已实现）
+
+Schema v1 的规则和七类模板见 [knowledge/schema/README.md](knowledge/schema/README.md)。可执行契约位于 `backend/app/domain/wiki.py`，以 Pydantic 定义稳定页面 ID、类型、标题、别名、来源证据、关联关系、适用范围和冲突记录。舰娘改造形态分别建页，通过 `form_of` 关联，并检查循环关系。
+
+来源证据固定引用数据库 `raw_snapshots.id` 与具体段落或表格定位；不使用抓取目录 UUID 或“最新快照”代替。正文使用 `[@c1]` 引用证据，使用 `[[ship:akagi|赤城]]` 链接页面。Markdown 读写采用安全 YAML，拒绝重复键、未知字段与不兼容版本；校验忽略代码示例和 HTML 注释中的标题、引用及链接。
+
+```sh
+# 从模型导出 frontmatter JSON Schema，输出到终端
+uv run python -m backend.app.domain export-schema
+# 先按模板在候选目录填入真实内容，再做草稿结构检查
+uv run python -m backend.app.domain check knowledge/staging/candidate
+# 对完整候选页面集合做发布前结构检查；不会实际发布
+uv run python -m backend.app.domain check knowledge/staging/candidate \
+  --publish --evidence-catalog knowledge/staging/evidence-catalog.json
+```
+
+检查目录按 `ships/<slug>.md` 等规范路径组织；也可将目录参数替换为单个页面路径。必需小节、标题、未定义或未使用的引用、错误路径及重复 ID 等问题均报错。草稿模式对缺失页面目标、未解决冲突及未核对证据给出警告；`--publish` 将其视为错误，并要求证据目录确认快照所属来源及定位标识。命令有错误时返回非零状态。
+
+证据目录采用 `{"快照UUID": {"source_id": "来源ID", "locators": ["具体定位"]}}` 格式，供后续解析器接入；目前尚无自动生成器。结构检查不能验证结论、数值或引文是否忠实原文，手工构造目录也不能证明证据真实存在。当前不生成真实知识页面、不调用 LLM、不变更数据库，也不创建 Wiki Git 发布版本。
 
 ### 数据源抓取（已实现）
 
@@ -325,10 +345,12 @@ curl -X POST http://127.0.0.1:8000/sources/wikiwiki-kancolle/crawl
 
 VS Code 工作区已配置使用 `.venv/bin/python` 和 pytest，关闭保存时自动发现测试。pytest 与 pytest-cov 已加入开发依赖，执行 `uv sync --locked` 即可安装。现有 unittest 风格用例由 pytest 运行。若编辑器仍使用旧配置，运行 `Developer: Reload Window`，并通过 `Python: Select Interpreter` 选择项目 `.venv/bin/python`，再手动刷新测试面板。
 
-测试未执行，需用户手动执行；覆盖率待用户验证。核心统计范围明确为 `backend/app/ingestion/` 与 `backend/app/worker/` 全部模块（含 HTTP 采集、存储、范围规则、调度、执行和失败处理），最低门槛超过 60%，目标超过 80%。测试使用内存 SQLite、HTTP 替身和临时目录，不依赖真实站点或 PostgreSQL。PostgreSQL 锁、迁移和服务联调仍需实际环境验证。
+测试未执行，需用户手动执行；覆盖率待用户验证。核心统计范围在 `pyproject.toml` 中明确列为 `backend/app/ingestion/`、`backend/app/worker/` 全部模块（含 HTTP 采集、存储、范围规则、调度、执行和失败处理），以及 Schema 核心模块 `backend/app/domain/wiki.py`、`markdown.py`、`validation.py`；Schema 命令行入口不纳入核心分母。最低门槛超过 60%，目标超过 80%。测试使用内存 SQLite、HTTP 替身和临时目录，不依赖真实站点、模型或 PostgreSQL。新增 Schema 用例覆盖身份、引用、适用范围、改造关系、冲突、YAML 安全读写、草稿与发布前校验。PostgreSQL 锁、迁移和服务联调仍需实际环境验证。
 
 ```sh
 uv run python -m pytest
+# 仅手动执行 Schema 核心规则用例
+uv run python -m pytest tests/test_wiki_schema.py tests/test_wiki_validation.py
 # 使用 pyproject.toml 中列出的全部核心模块范围统计覆盖率
 uv run python -m pytest --cov --cov-report=term-missing --cov-report=html
 ```
