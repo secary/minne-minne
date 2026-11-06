@@ -36,7 +36,10 @@ CRAWL_SOURCES = (
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="MINNE_", env_file=".env")
+    # The dotenv file is shared with Compose (password, mounts and proxy settings).
+    model_config = SettingsConfigDict(
+        env_prefix="MINNE_", env_file=".env", extra="ignore"
+    )
 
     database_url: str = "postgresql+psycopg://minne:minne@localhost:5432/minne"
     raw_dir: Path = Path("knowledge/raw")

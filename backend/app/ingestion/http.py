@@ -31,22 +31,32 @@ class Fetcher:
     def request(self, url: str):
         time.sleep(max(0, self.delay - (time.monotonic() - self.last_request)))
         self.last_request = time.monotonic()
-        with self.client.stream("GET", url) as response:
-            content = bytearray()
-            for chunk in response.iter_bytes():
-                content.extend(chunk)
-                if len(content) > MAX_BYTES:
-                    raise ValueError("Response exceeds 10 MiB")
-            # iter_bytes() already decoded content and transfer encodings.
-            headers = response.headers.copy()
-            for name in ("content-encoding", "content-length", "transfer-encoding"):
-                headers.pop(name, None)
-            return httpx.Response(
-                response.status_code,
-                headers=headers,
-                content=bytes(content),
-                request=response.request,
-            )
+        try:
+            with self.client.stream("GET", url) as response:
+                content = bytearray()
+                for chunk in response.iter_bytes():
+                    content.extend(chunk)
+                    if len(content) > MAX_BYTES:
+                        raise ValueError("Response exceeds 10 MiB")
+                # iter_bytes() already decoded content and transfer encodings.
+                headers = response.headers.copy()
+                for name in ("content-encoding", "content-length", "transfer-encoding"):
+                    headers.pop(name, None)
+                return httpx.Response(
+                    response.status_code,
+                    headers=headers,
+                    content=bytes(content),
+                    request=response.request,
+                )
+        except httpx.ConnectError as exc:
+            display_url = httpx.URL(url).copy_with(userinfo=b"")
+            raise httpx.ConnectError(
+                f"HTTP connection failed for {display_url}. Check the destination "
+                "and HTTP_PROXY/HTTPS_PROXY/ALL_PROXY settings. In Docker, proxy "
+                "localhost/127.0.0.1 refers to the container; use "
+                "host.docker.internal for a host proxy and ensure its port is reachable.",
+                request=exc.request,
+            ) from exc
 
     def load_robots(self, url: str):
         origin = urlsplit(url)

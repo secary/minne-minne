@@ -1,3 +1,4 @@
+import argparse
 import logging
 import time
 from datetime import timedelta
@@ -28,19 +29,29 @@ def enqueue(session, source):
     return job
 
 
-def tick():
+def schedule():
+    scheduled_at = now()
     with Session.begin() as session:
         sources = session.scalars(
             select(Source)
-            .where(Source.enabled.is_(True), Source.next_run_at <= now())
+            .where(Source.enabled.is_(True), Source.next_run_at <= scheduled_at)
             .with_for_update()
         ).all()
         for source in sources:
             enqueue(session, source)
-            source.next_run_at = next_month(now(), source.interval_months)
+            source.next_run_at = next_month(scheduled_at, source.interval_months)
+
+
+def claim(cutoff=None):
+    cutoff = cutoff if cutoff is not None else now()
+    with Session.begin() as session:
         job = session.scalar(
             select(Job)
-            .where(Job.status == "pending", Job.available_at <= now())
+            .where(
+                Job.status == "pending",
+                Job.available_at <= cutoff,
+                Job.created_at <= cutoff,
+            )
             .order_by(Job.created_at)
             .with_for_update(skip_locked=True)
             .limit(1)
@@ -54,7 +65,10 @@ def tick():
         job.errors = []
         job.error = None
         job.truncated = False
-        job_id = job.id
+        return job.id
+
+
+def execute(job_id):
     error = None
     try:
         crawl(job_id)
@@ -72,7 +86,37 @@ def tick():
             job.finished_at = now()
 
 
-def main():
+def tick():
+    schedule()
+    job_id = claim()
+    if job_id is not None:
+        execute(job_id)
+
+
+def run_once(lock):
+    lock.execute(text("SELECT 1"))
+    schedule()
+    # Include freshly scheduled jobs, then freeze eligibility for the whole round.
+    cutoff = now()
+    processed = 0
+    logger.info("Starting crawler round")
+    while True:
+        # Fail closed if the advisory-lock connection has been lost.
+        lock.execute(text("SELECT 1"))
+        job_id = claim(cutoff)
+        if job_id is None:
+            logger.info("Crawler round finished; processed %s job(s)", processed)
+            return
+        execute(job_id)
+        processed += 1
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description="Run the source ingestion worker")
+    parser.add_argument(
+        "--once", action="store_true", help="Process one round of ready jobs, then exit"
+    )
+    args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO)
     # One dedicated connection holds the lock across per-page commits.
     with engine.connect() as lock:
@@ -87,6 +131,9 @@ def main():
                 job.available_at = now()
                 if job.status == "failed":
                     job.finished_at = now()
+        if args.once:
+            run_once(lock)
+            return
         while True:
             # Fail closed if the advisory-lock connection has been lost.
             lock.execute(text("SELECT 1"))

@@ -1,0 +1,16 @@
+.git/
+.venv/
+.env
+.env.*
+**/__pycache__/
+**/*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.coverage
+htmlcov/
+knowledge/
+tests/
+frontend/
+node_modules/
+.vscode/
+.DS_Store

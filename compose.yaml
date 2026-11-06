@@ -1,6 +1,7 @@
 services:
   db:
     image: postgres:17
+    restart: unless-stopped
     environment:
       POSTGRES_DB: minne
       POSTGRES_USER: minne
@@ -14,5 +15,35 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+
+  source-crawler:
+    image: source-crawler:local
+    profiles: [crawler]
+    build:
+      context: .
+      dockerfile: infra/source-crawler/Dockerfile
+    init: true
+    restart: "no"
+    user: "${SOURCE_CRAWLER_UID:-1000}:${SOURCE_CRAWLER_GID:-1000}"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      MINNE_DATABASE_URL: ${SOURCE_CRAWLER_DATABASE_URL:-postgresql+psycopg://minne:${POSTGRES_PASSWORD:-minne}@db:5432/minne}
+      MINNE_RAW_DIR: /app/knowledge/raw
+      MINNE_USER_AGENT: "${MINNE_USER_AGENT:-MinneMinne/0.1 (personal knowledge archive)}"
+      HTTP_PROXY: ${SOURCE_CRAWLER_HTTP_PROXY:-}
+      HTTPS_PROXY: ${SOURCE_CRAWLER_HTTPS_PROXY:-}
+      ALL_PROXY: ${SOURCE_CRAWLER_ALL_PROXY:-}
+      NO_PROXY: ${SOURCE_CRAWLER_NO_PROXY:-localhost,127.0.0.1,db}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - type: bind
+        source: ${SOURCE_CRAWLER_RAW_DIR:-./knowledge/raw}
+        target: /app/knowledge/raw
+        bind:
+          create_host_path: false
+
 volumes:
   postgres_data:
